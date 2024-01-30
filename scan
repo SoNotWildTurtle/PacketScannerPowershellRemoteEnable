@@ -1,0 +1,96 @@
+Assuming your CSV file (RemoteMachines.csv) has a column named "ComputerName" that contains the names or IP addresses of the remote machines:
+
+csv
+Copy code
+ComputerName
+RemoteComputer1
+RemoteComputer2
+RemoteComputer3
+# Add more remote computers as needed
+Now, modify the script to include the CSV processing:
+
+powershell
+Copy code
+# Read the CSV file with remote machine names
+$csvPath = "Path\To\Your\RemoteMachines.csv"
+$remoteMachines = Import-Csv $csvPath
+
+# Define the script content
+$scriptContent = @"
+# PowerShell script for Basic Packet Capture and Display
+
+# Enable PowerShell remoting on the remote computer
+Enable-PSRemoting -Force
+
+function Display-Packet(\$packet) {
+    # Display packet information
+    Write-Host "Packet Captured:"
+    \$packet | Format-List | Out-String
+}
+
+# Start sniffing on all network adapters
+\$tcpSniffer = New-Object Net.Sockets.Socket([Net.Sockets.AddressFamily]::InterNetwork, [Net.Sockets.SocketType]::Raw, [Net.Sockets.ProtocolType]::Tcp)
+\$udpSniffer = New-Object Net.Sockets.Socket([Net.Sockets.AddressFamily]::InterNetwork, [Net.Sockets.SocketType]::Raw, [Net.Sockets.ProtocolType]::Udp)
+
+\$tcpSniffer.Bind((New-Object Net.IPEndPoint [Net.IPAddress]::Any, 0))
+\$udpSniffer.Bind((New-Object Net.IPEndPoint [Net.IPAddress]::Any, 0))
+
+while (\$true) {
+    \$tcpData = \$null
+    \$udpData = \$null
+    
+    \$tcpSniffer.Receive([ref]\$tcpData)
+    \$udpSniffer.Receive([ref]\$udpData)
+    
+    \$tcpPacket = New-Object PSObject -Property @{
+        Data = \$tcpData
+        Protocol = "TCP"
+    }
+    
+    \$udpPacket = New-Object PSObject -Property @{
+        Data = \$udpData
+        Protocol = "UDP"
+    }
+
+    # Display packet information for both TCP and UDP
+    Display-Packet \$tcpPacket
+    Display-Packet \$udpPacket
+}
+"@
+
+# Loop through each remote machine in the CSV
+foreach ($machine in $remoteMachines) {
+    $remoteComputer = $machine.ComputerName
+
+    # Define the script file path on the remote computer
+    $scriptFilePath = "\\$remoteComputer\c$\Path\To\Your\Script.ps1"
+
+    # Use New-Item to create an empty file at the specified path on the remote computer
+    Invoke-Command -ComputerName $remoteComputer -ScriptBlock {
+        param(\$filePath)
+        New-Item -Path \$filePath -ItemType File -Force
+    } -ArgumentList $scriptFilePath
+
+    # Save the script content to the file on the remote computer
+    Invoke-Command -ComputerName $remoteComputer -ScriptBlock {
+        param(\$content, \$filePath)
+        \$content | Out-File -FilePath \$filePath -Force
+    } -ArgumentList $scriptContent, $scriptFilePath
+
+    # Display a message indicating script creation
+    Write-Host "Script created and saved to $scriptFilePath on $remoteComputer"
+
+    # Perform actions to upload the script to a remote location (replace with your specific upload command)
+    # Example using SCP
+    # Start-Process scp -ArgumentList "$scriptFilePath remoteuser@remotehost:/path/to/upload/"
+
+    # Example using FTP
+    # $ftpSession = New-Object Net.WebClient
+    # $ftpSession.UploadFile("ftp://remotehost/path/to/upload/Script.ps1", $scriptFilePath)
+
+    # Execute the script content on the remote computer
+    Invoke-Command -ComputerName $remoteComputer -ScriptBlock {
+        param(\$content)
+        Invoke-Expression \$content
+    } -ArgumentList $scriptContent
+}
